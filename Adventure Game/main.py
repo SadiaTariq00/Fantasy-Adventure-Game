@@ -1,6 +1,7 @@
 import chainlit as cl
 import os
 from dotenv import load_dotenv
+from agents import Runner
 from agents.narrator_agent import NarratorAgent
 from agents.monster_agent import MonsterAgent
 from agents.item_agent import ItemAgent
@@ -9,12 +10,18 @@ from agents.item_agent import ItemAgent
 load_dotenv()
 openai_key = os.getenv("OPENAI_API_KEY")
 
+if not openai_key:
+    raise ValueError("❌ OPENAI_API_KEY not found! Please add it to your .env file.")
+
 # Initialize agents
 narrator = NarratorAgent()
 monster = MonsterAgent()
 item = ItemAgent()
 
-# Game state
+# Create a runner to manage all agents
+runner = Runner([narrator, monster, item])
+
+
 state = {"stage": "start", "inventory": [], "health": 100}
 
 @cl.on_chat_start
@@ -41,7 +48,7 @@ async def handle_message(message: cl.Message):
     msg = message.content.strip().lower()
 
     if state["stage"] == "intro" and msg == "start":
-        story = narrator.intro()
+        story = await runner.run(narrator.intro)
         state["stage"] = "explore"
         await cl.Message(content=f"📖 {story}").send()
         await cl.Message(content="🔎 Type `explore` to continue your journey.").send()
@@ -51,11 +58,11 @@ async def handle_message(message: cl.Message):
             await cl.Message(content="⚠️ Please type `explore` to continue.").send()
             return
 
-        outcome = narrator.generate_event()
+        outcome = await runner.run(narrator.generate_event)
         await cl.Message(content=f"🌍 {outcome['text']}").send()
 
         if outcome.get("enemy"):
-            result = monster.fight(state["health"])
+            result = await runner.run(monster.fight, state["health"])
             state["health"] = result["health"]
             await cl.Message(content=f"⚔️ {result['text']}").send()
             await cl.Message(content=f"❤️ Health: {state['health']}").send()
@@ -68,7 +75,7 @@ async def handle_message(message: cl.Message):
             state["stage"] = "reward"
 
         if state["stage"] == "reward":
-            reward = item.give_item()
+            reward = await runner.run(item.give_item)
             state["inventory"].append(reward)
             state["stage"] = "explore"
             await cl.Message(content=f"🎁 You found: **{reward}**").send()
@@ -81,3 +88,4 @@ async def handle_message(message: cl.Message):
 
     else:
         await cl.Message(content="❓ Type `start` to begin or `explore` to continue.").send()
+
